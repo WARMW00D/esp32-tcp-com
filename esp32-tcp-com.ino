@@ -13,8 +13,8 @@
 // =========================================================================
 // 2. ЗАВОДСКИЕ ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ (используются один раз, пока NVS пуст)
 // =========================================================================
-const char* DEFAULT_SSID     = "e1";
-const char* DEFAULT_PASSWORD = "ji3Xephe";
+const char* DEFAULT_SSID     = "ssid";
+const char* DEFAULT_PASSWORD = "password";
 const int port    = 8888; // TCP порт для виртуального COM-порта
 const int webPort = 80;   // Порт веб-портала
 
