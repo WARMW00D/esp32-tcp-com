@@ -40,8 +40,8 @@
 2. Выберите плату **ESP32C3 Dev Module**.
 3. При желании поменяйте заводские значения по умолчанию в начале файла:
    ```cpp
-   const char* DEFAULT_SSID     = "e1";
-   const char* DEFAULT_PASSWORD = "ji3Xephe";
+   const char* DEFAULT_SSID     = "Ваш ssid";
+   const char* DEFAULT_PASSWORD = "Ваш пароль";
    const char* apSsid     = "ESP32-Console";
    const char* apPassword = "console1234";
    ```
