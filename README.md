@@ -8,7 +8,7 @@ A remote COM port for console access to network equipment (Cisco and compatible)
 - **Single active session** — a second connection attempt gets `BUSY` until the first one is closed (or kicked from the web portal).
 - **Web portal** on port `80`: device status, traffic stats, session controls — dark theme.
 - **RU/EN language switch** built right into the portal.
-- **Configurable UART speed** (1200–230400 baud) — changes on the fly, no reboot needed.
+- **Configurable UART speed** (1200–115200 baud) — changes on the fly, no reboot needed.
 - **Fallback access point**: if the target Wi-Fi network is unreachable or not configured, the device starts its own AP `ESP32-Console` at `192.168.4.1`.
 - **Wi-Fi setup via the portal**: scan for networks, pick an SSID from the list or enter one manually (for hidden networks), save and reconnect — no reflashing required.
 - **Session password** — optional protection for the TCP port, requested from the client on connect.
