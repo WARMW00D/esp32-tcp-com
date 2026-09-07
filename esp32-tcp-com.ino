@@ -14,8 +14,8 @@
 // =========================================================================
 // 2. ЗАВОДСКИЕ ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ (используются один раз, пока NVS пуст)
 // =========================================================================
-const char* DEFAULT_SSID     = "e1";
-const char* DEFAULT_PASSWORD = "ji3Xephe";
+const char* DEFAULT_SSID     = "ssid";
+const char* DEFAULT_PASSWORD = "password";
 const int port    = 8888; // TCP порт для виртуального COM-порта
 const int webPort = 80;   // Порт веб-портала
 
@@ -26,7 +26,7 @@ const unsigned long wifiConnectTimeoutMs = 15000;
 // В режиме AP устройство всегда доступно по адресу 192.168.4.1
 
 #define DEFAULT_UART_BAUD 9600
-const long baudOptions[] = {1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200};
+const long baudOptions[] = {1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400};
 const int baudOptionsCount = sizeof(baudOptions) / sizeof(baudOptions[0]);
 
 #ifdef USE_BAN_LIST
