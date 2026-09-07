@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
+#include <esp_system.h>
 
 // =========================================================================
 // 1. ГЛОБАЛЬНЫЕ НАСТРОЙКИ РЕЖИМОВ (компилируемые)
@@ -13,8 +14,8 @@
 // =========================================================================
 // 2. ЗАВОДСКИЕ ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ (используются один раз, пока NVS пуст)
 // =========================================================================
-const char* DEFAULT_SSID     = "ssid";
-const char* DEFAULT_PASSWORD = "password";
+const char* DEFAULT_SSID     = "e1";
+const char* DEFAULT_PASSWORD = "ji3Xephe";
 const int port    = 8888; // TCP порт для виртуального COM-порта
 const int webPort = 80;   // Порт веб-портала
 
@@ -60,6 +61,58 @@ unsigned long txBytesTotal = 0;
 bool kickRequested = false;
 bool apMode = false;
 
+// --- Буферизованный мост TCP<->UART ---
+#define BRIDGE_BUF_SIZE 512
+uint8_t bridgeBuf[BRIDGE_BUF_SIZE];
+
+// --- Минимальный фильтр Telnet IAC (чтобы согласование эха не улетало в UART) ---
+enum TelnetState { TN_DATA, TN_IAC, TN_CMD, TN_SB };
+TelnetState telnetState = TN_DATA;
+const uint8_t TELNET_NEGOTIATION[] = { 0xFF, 0xFB, 0x01,  // IAC WILL ECHO — просим клиент отключить локальное эхо
+                                        0xFF, 0xFB, 0x03 }; // IAC WILL SUPPRESS_GO_AHEAD
+
+// Схлопывает telnet-перевод строки (CR LF или CR NUL) в одиночный CR перед отправкой в UART —
+// иначе Cisco консоль воспринимает второй байт как ещё один Enter (двойной вывод приглашения)
+bool pendingCRCheck = false;
+int normalizeLineEndings(uint8_t *buf, int len) {
+  int outLen = 0;
+  for (int i = 0; i < len; i++) {
+    uint8_t b = buf[i];
+    if (pendingCRCheck) {
+      pendingCRCheck = false;
+      if (b == 0x0A || b == 0x00) continue; // "довесок" после CR — выбрасываем, это не отдельный Enter
+    }
+    buf[outLen++] = b;
+    if (b == 0x0D) pendingCRCheck = true;
+  }
+  return outLen;
+}
+int filterTelnetIAC(uint8_t *buf, int len) {
+  int outLen = 0;
+  for (int i = 0; i < len; i++) {
+    uint8_t b = buf[i];
+    switch (telnetState) {
+      case TN_DATA:
+        if (b == 0xFF) telnetState = TN_IAC;
+        else buf[outLen++] = b;
+        break;
+      case TN_IAC:
+        if (b == 0xFF) { buf[outLen++] = 0xFF; telnetState = TN_DATA; } // экранированный 0xFF — это данные
+        else if (b == 0xFA) telnetState = TN_SB;
+        else if (b == 0xFB || b == 0xFC || b == 0xFD || b == 0xFE) telnetState = TN_CMD; // WILL/WONT/DO/DONT
+        else telnetState = TN_DATA; // однобайтовые команды (NOP, GA и т.п.)
+        break;
+      case TN_CMD:
+        telnetState = TN_DATA; // это был байт опции для WILL/WONT/DO/DONT
+        break;
+      case TN_SB:
+        if (b == 0xF0) telnetState = TN_DATA; // SE — конец субпереговоров (упрощённо)
+        break;
+    }
+  }
+  return outLen;
+}
+
 // =========================================================================
 // 4. НАСТРОЙКИ, ХРАНИМЫЕ В NVS
 // =========================================================================
@@ -103,7 +156,7 @@ enum TKey {
   T_UART_SPEED_HINT, T_SAVE_BUTTON, T_BACK_TO_STATUS,
   T_WIFI_TITLE, T_CURRENT_NETWORK, T_SCAN_BUTTON, T_SCANNING_HINT, T_SELECT_NETWORK, T_MANUAL_SSID,
   T_MANUAL_SSID_HINT, T_WIFI_PASSWORD, T_WIFI_PASSWORD_HINT, T_SAVE_REBOOT_BUTTON, T_RESET_WIFI_HINT,
-  T_LANG_SWITCH, T_KEY_COUNT
+  T_LANG_SWITCH, T_WIFI_OPEN_LABEL, T_KEY_COUNT
 };
 const char* T_RU[T_KEY_COUNT] = {
   /*TITLE*/ "ESP32 Console Server",
@@ -167,10 +220,11 @@ const char* T_RU[T_KEY_COUNT] = {
   /*MANUAL_SSID*/ "\u0418\u043b\u0438 \u0432\u0432\u0435\u0434\u0438\u0442\u0435 \u0432\u0440\u0443\u0447\u043d\u0443\u044e (SSID)",
   /*MANUAL_SSID_HINT*/ "\u0417\u0430\u043f\u043e\u043b\u043d\u0438\u0442\u0435, \u0435\u0441\u043b\u0438 \u0441\u0435\u0442\u044c \u0441\u043a\u0440\u044b\u0442\u0430 \u0438\u043b\u0438 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u0430 \u043f\u0440\u0438 \u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0438.",
   /*WIFI_PASSWORD*/ "\u041f\u0430\u0440\u043e\u043b\u044c \u0441\u0435\u0442\u0438",
-  /*WIFI_PASSWORD_HINT*/ "\u041f\u0443\u0441\u0442\u043e\u0435 \u043f\u043e\u043b\u0435 = \u043e\u0442\u043a\u0440\u044b\u0442\u0430\u044f \u0441\u0435\u0442\u044c \u0431\u0435\u0437 \u043f\u0430\u0440\u043e\u043b\u044f.",
+  /*WIFI_PASSWORD_HINT*/ "\u041e\u0441\u0442\u0430\u0432\u044c\u0442\u0435 \u043f\u0443\u0441\u0442\u044b\u043c, \u0447\u0442\u043e\u0431\u044b \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c. \u0414\u043b\u044f \u043e\u0442\u043a\u0440\u044b\u0442\u043e\u0439 \u0441\u0435\u0442\u0438 \u0431\u0435\u0437 \u043f\u0430\u0440\u043e\u043b\u044f \u043e\u0442\u043c\u0435\u0442\u044c\u0442\u0435 \u0433\u0430\u043b\u043e\u0447\u043a\u0443 \u043d\u0438\u0436\u0435.",
   /*SAVE_REBOOT_BUTTON*/ "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0438 \u043f\u0435\u0440\u0435\u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c",
   /*RESET_WIFI_HINT*/ "\u0423\u0434\u0430\u043b\u0438\u0442 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u0443\u044e \u0441\u0435\u0442\u044c \u0438 \u043f\u0435\u0440\u0435\u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u043e \u0432 \u0440\u0435\u0436\u0438\u043c \u0441\u043e\u0431\u0441\u0442\u0432\u0435\u043d\u043d\u043e\u0439 \u0442\u043e\u0447\u043a\u0438 \u0434\u043e\u0441\u0442\u0443\u043f\u0430 192.168.4.1.",
-  /*LANG_SWITCH*/ "English"
+  /*LANG_SWITCH*/ "English",
+  /*WIFI_OPEN_LABEL*/ "\u042d\u0442\u043e \u043e\u0442\u043a\u0440\u044b\u0442\u0430\u044f \u0441\u0435\u0442\u044c (\u0431\u0435\u0437 \u043f\u0430\u0440\u043e\u043b\u044f)"
 };
 const char* T_EN[T_KEY_COUNT] = {
   "ESP32 Console Server", "WiFi \u2192 COM bridge", "CONSOLE", "State", "Free", "Busy", "Client", "\u2014",
@@ -188,11 +242,11 @@ const char* T_EN[T_KEY_COUNT] = {
   "\u2190 back to status",
   "Wi-Fi settings", "Current connection", "Scan networks", "Press \u00abScan networks\u00bb to see available networks.",
   "Select a network", "Or enter manually (SSID)", "Fill in if the network is hidden or wasn't found by the scan.",
-  "Network password", "Empty field = open network with no password.", "Save and restart",
+  "Network password", "Leave blank to keep the currently saved password. For an open network with no password, check the box below.", "Save and restart",
   "Deletes the saved network and restarts the device into its own access point at 192.168.4.1.",
-  "\u0420\u0443\u0441\u0441\u043a\u0438\u0439"
+  "\u0420\u0443\u0441\u0441\u043a\u0438\u0439", "This is an open network (no password)"
 };
-String T(TKey k) { return String(g_language == "en" ? T_EN[k] : T_RU[k]); }
+String T(int k) { return String(g_language == "en" ? T_EN[k] : T_RU[k]); }
 
 #ifdef USE_BAN_LIST
 int getIPRecordIndex(IPAddress ip) {
@@ -506,6 +560,7 @@ void handleWifiGet() {
   html += "<p class='hint'>" + T(T_MANUAL_SSID_HINT) + "</p>";
   html += "<label>" + T(T_WIFI_PASSWORD) + "</label><input type='text' name='wifi_pass' value=''>";
   html += "<p class='hint'>" + T(T_WIFI_PASSWORD_HINT) + "</p>";
+  html += "<label style='display:flex;align-items:center;gap:8px;margin-bottom:12px'><input type='checkbox' name='wifi_open' style='width:auto;margin:0'> " + T(T_WIFI_OPEN_LABEL) + "</label>";
   html += "</div>";
 
   html += "<div class='section'>" + uartSpeedSelect() + "</div>";
@@ -525,7 +580,15 @@ void handleWifiPost() {
   String picked = webServer.arg("ssid");
   String chosen = manual.length() > 0 ? manual : picked;
   if (chosen.length() > 0) g_ssid = chosen;
-  g_staPassword = webServer.arg("wifi_pass"); // пусто = открытая сеть
+
+  bool openNetwork = webServer.hasArg("wifi_open");
+  String pass = webServer.arg("wifi_pass");
+  if (openNetwork) {
+    g_staPassword = ""; // явно отмечено как открытая сеть
+  } else if (pass.length() > 0) {
+    g_staPassword = pass; // введён новый пароль
+  }
+  // иначе поле пустое и галочка не стоит — оставляем ранее сохранённый пароль как есть
 
   long newBaud = webServer.arg("baud").toInt();
   if (newBaud > 0) g_uartBaud = newBaud; // применится при перезапуске вместе с новой сетью
@@ -590,7 +653,11 @@ void setupWebPortal() {
 
 void setup() {
   Serial.begin(115200);
+  delay(200);
+  Serial.println("[SYSTEM] Reset reason: " + String(esp_reset_reason()));
   loadSettings();
+  Serial1.setRxBufferSize(4096); // заводской буфер 256 байт слишком мал для быстрого "show run" и т.п.
+  Serial1.setTxBufferSize(1024);
   Serial1.begin(g_uartBaud, SERIAL_8N1, RX1_PIN, TX1_PIN);
 
   WiFi.setSleep(false);
@@ -609,11 +676,14 @@ void setup() {
   if (g_ssid.length() == 0) {
     apMode = true;
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(apSsid, apPassword);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
+    bool apOk = WiFi.softAP(apSsid, apPassword);
     Serial.println("[SYSTEM] No Wi-Fi network configured. Fallback AP started.");
+    Serial.println("[SYSTEM] softAP() returned: " + String(apOk ? "OK" : "FAILED"));
     Serial.println("[SYSTEM] AP SSID: " + String(apSsid) + "   AP IP: " + WiFi.softAPIP().toString());
   } else {
     WiFi.mode(WIFI_STA);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
     WiFi.begin(g_ssid.c_str(), g_staPassword.c_str());
     Serial.print("[SYSTEM] Connecting to \"" + g_ssid + "\"");
     unsigned long connectStarted = millis();
@@ -621,6 +691,25 @@ void setup() {
       delay(500);
       Serial.print(".");
     }
+
+    if (WiFi.status() != WL_CONNECTED) {
+      // Радио иногда не полностью переинициализируется после программного ESP.restart() —
+      // пробуем полностью выключить и включить Wi-Fi заново перед тем, как сдаться и уйти в AP.
+      Serial.println("\n[WARNING] First attempt failed, power-cycling the radio and retrying...");
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      delay(300);
+      WiFi.mode(WIFI_STA);
+      delay(100);
+      WiFi.begin(g_ssid.c_str(), g_staPassword.c_str());
+      Serial.print("[SYSTEM] Retrying connection to \"" + g_ssid + "\"");
+      connectStarted = millis();
+      while (WiFi.status() != WL_CONNECTED && (millis() - connectStarted) < wifiConnectTimeoutMs) {
+        delay(500);
+        Serial.print(".");
+      }
+    }
+
     if (WiFi.status() == WL_CONNECTED) {
       apMode = false;
       Serial.println("\n[SYSTEM] Connected. Current ESP32-C3 IP: " + WiFi.localIP().toString());
@@ -628,8 +717,10 @@ void setup() {
       apMode = true;
       WiFi.disconnect(true);
       WiFi.mode(WIFI_AP);
-      WiFi.softAP(apSsid, apPassword);
+      WiFi.setTxPower(WIFI_POWER_8_5dBm);
+      bool apOk = WiFi.softAP(apSsid, apPassword);
       Serial.println("\n[WARNING] Configured WiFi unreachable. Fallback AP started.");
+      Serial.println("[SYSTEM] softAP() returned: " + String(apOk ? "OK" : "FAILED"));
       Serial.println("[SYSTEM] AP SSID: " + String(apSsid) + "   AP IP: " + WiFi.softAPIP().toString());
     }
   }
@@ -696,6 +787,8 @@ void loop() {
     } else {
       client = newClient;
       client.setNoDelay(true);
+      telnetState = TN_DATA; // сброс фильтра IAC для новой сессии
+      client.write(TELNET_NEGOTIATION, sizeof(TELNET_NEGOTIATION)); // просим клиент отключить локальное эхо
       bool authRequired = (g_authPassword.length() > 0);
       if (authRequired) {
         isAuthenticated = false;
@@ -750,13 +843,26 @@ void loop() {
   }
 
   if (client && client.connected() && isAuthenticated) {
-    while (client.available() > 0) {
-      Serial1.write(client.read());
-      rxBytesTotal++;
+    int avail;
+    while ((avail = client.available()) > 0) {
+      int toRead = avail > BRIDGE_BUF_SIZE ? BRIDGE_BUF_SIZE : avail;
+      int len = client.read(bridgeBuf, toRead);
+      if (len > 0) {
+        int filtered = filterTelnetIAC(bridgeBuf, len); // вырезаем telnet-согласование клиента, не пускаем в UART
+        filtered = normalizeLineEndings(bridgeBuf, filtered); // схлопываем CR LF / CR NUL в один CR
+        if (filtered > 0) {
+          Serial1.write(bridgeBuf, filtered);
+          rxBytesTotal += filtered;
+        }
+      }
     }
-    while (Serial1.available() > 0) {
-      client.write(Serial1.read());
-      txBytesTotal++;
+    while ((avail = Serial1.available()) > 0) {
+      int toRead = avail > BRIDGE_BUF_SIZE ? BRIDGE_BUF_SIZE : avail;
+      int len = Serial1.read(bridgeBuf, toRead);
+      if (len > 0) {
+        client.write(bridgeBuf, len);
+        txBytesTotal += len;
+      }
     }
   }
 }
