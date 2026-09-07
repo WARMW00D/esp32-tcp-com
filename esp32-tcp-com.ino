@@ -26,7 +26,7 @@ const unsigned long wifiConnectTimeoutMs = 15000;
 // В режиме AP устройство всегда доступно по адресу 192.168.4.1
 
 #define DEFAULT_UART_BAUD 9600
-const long baudOptions[] = {1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400};
+const long baudOptions[] = {1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200};
 const int baudOptionsCount = sizeof(baudOptions) / sizeof(baudOptions[0]);
 
 #ifdef USE_BAN_LIST
