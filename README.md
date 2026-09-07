@@ -39,8 +39,8 @@ A remote COM port for console access to network equipment (Cisco and compatible)
 2. Select the **ESP32C3 Dev Module** board.
 3. Optionally change the factory defaults near the top of the file:
    ```cpp
-   const char* DEFAULT_SSID     = "e1";
-   const char* DEFAULT_PASSWORD = "ji3Xephe";
+   const char* DEFAULT_SSID     = "your_ssid";
+   const char* DEFAULT_PASSWORD = "your_password";
    const char* apSsid     = "ESP32-Console";
    const char* apPassword = "console1234";
    ```
