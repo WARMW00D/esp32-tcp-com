@@ -14,8 +14,8 @@
 // =========================================================================
 // 2. ЗАВОДСКИЕ ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ (используются один раз, пока NVS пуст)
 // =========================================================================
-const char* DEFAULT_SSID     = "ssid";
-const char* DEFAULT_PASSWORD = "password";
+const char* DEFAULT_SSID     = "your_ssid";
+const char* DEFAULT_PASSWORD = "your_password";
 const int port    = 8888; // TCP порт для виртуального COM-порта
 const int webPort = 80;   // Порт веб-портала
 
@@ -156,7 +156,7 @@ enum TKey {
   T_UART_SPEED_HINT, T_SAVE_BUTTON, T_BACK_TO_STATUS,
   T_WIFI_TITLE, T_CURRENT_NETWORK, T_SCAN_BUTTON, T_SCANNING_HINT, T_SELECT_NETWORK, T_MANUAL_SSID,
   T_MANUAL_SSID_HINT, T_WIFI_PASSWORD, T_WIFI_PASSWORD_HINT, T_SAVE_REBOOT_BUTTON, T_RESET_WIFI_HINT,
-  T_LANG_SWITCH, T_WIFI_OPEN_LABEL, T_KEY_COUNT
+  T_LANG_SWITCH, T_WIFI_OPEN_LABEL, T_MAC_ADDRESS, T_KEY_COUNT
 };
 const char* T_RU[T_KEY_COUNT] = {
   /*TITLE*/ "ESP32 Console Server",
@@ -224,7 +224,8 @@ const char* T_RU[T_KEY_COUNT] = {
   /*SAVE_REBOOT_BUTTON*/ "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0438 \u043f\u0435\u0440\u0435\u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c",
   /*RESET_WIFI_HINT*/ "\u0423\u0434\u0430\u043b\u0438\u0442 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u0443\u044e \u0441\u0435\u0442\u044c \u0438 \u043f\u0435\u0440\u0435\u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u043e \u0432 \u0440\u0435\u0436\u0438\u043c \u0441\u043e\u0431\u0441\u0442\u0432\u0435\u043d\u043d\u043e\u0439 \u0442\u043e\u0447\u043a\u0438 \u0434\u043e\u0441\u0442\u0443\u043f\u0430 192.168.4.1.",
   /*LANG_SWITCH*/ "English",
-  /*WIFI_OPEN_LABEL*/ "\u042d\u0442\u043e \u043e\u0442\u043a\u0440\u044b\u0442\u0430\u044f \u0441\u0435\u0442\u044c (\u0431\u0435\u0437 \u043f\u0430\u0440\u043e\u043b\u044f)"
+  /*WIFI_OPEN_LABEL*/ "\u042d\u0442\u043e \u043e\u0442\u043a\u0440\u044b\u0442\u0430\u044f \u0441\u0435\u0442\u044c (\u0431\u0435\u0437 \u043f\u0430\u0440\u043e\u043b\u044f)",
+  /*MAC_ADDRESS*/ "MAC-\u0430\u0434\u0440\u0435\u0441"
 };
 const char* T_EN[T_KEY_COUNT] = {
   "ESP32 Console Server", "WiFi \u2192 COM bridge", "CONSOLE", "State", "Free", "Busy", "Client", "\u2014",
@@ -244,7 +245,7 @@ const char* T_EN[T_KEY_COUNT] = {
   "Select a network", "Or enter manually (SSID)", "Fill in if the network is hidden or wasn't found by the scan.",
   "Network password", "Leave blank to keep the currently saved password. For an open network with no password, check the box below.", "Save and restart",
   "Deletes the saved network and restarts the device into its own access point at 192.168.4.1.",
-  "\u0420\u0443\u0441\u0441\u043a\u0438\u0439", "This is an open network (no password)"
+  "\u0420\u0443\u0441\u0441\u043a\u0438\u0439", "This is an open network (no password)", "MAC address"
 };
 String T(int k) { return String(g_language == "en" ? T_EN[k] : T_RU[k]); }
 
@@ -422,6 +423,7 @@ void handleRoot() {
   html += row(T(T_MODE), apMode ? T(T_MODE_AP) : T(T_MODE_STA));
   html += row(T(T_NETWORK), apMode ? String(apSsid) : g_ssid);
   html += row(T(T_IP_ADDRESS), apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString());
+  html += row(T(T_MAC_ADDRESS), apMode ? WiFi.softAPmacAddress() : WiFi.macAddress());
   if (apMode) html += row(T(T_AP_CLIENTS), String(WiFi.softAPgetStationNum()));
   else html += row(T(T_SIGNAL), String(WiFi.RSSI()) + " dBm");
   html += "</div>";
@@ -543,6 +545,7 @@ void handleWifiGet() {
   html += row(T(T_MODE), apMode ? T(T_MODE_AP) : T(T_MODE_STA));
   html += row(T(T_NETWORK), apMode ? String(apSsid) : g_ssid);
   html += row(T(T_IP_ADDRESS), apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString());
+  html += row(T(T_MAC_ADDRESS), apMode ? WiFi.softAPmacAddress() : WiFi.macAddress());
   html += "</div>";
 
   html += "<form method='GET' action='/wifi'><button type='submit' name='scan' value='1'>" + T(T_SCAN_BUTTON) + "</button></form>";
