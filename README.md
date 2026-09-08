@@ -2,6 +2,8 @@
 
 A remote COM port for console access to network equipment (Cisco and compatible) over Wi-Fi. An ESP32-C3 + MAX3232 turn a device's local console port into a TCP socket reachable over the network — no need to physically plug a laptop into every switch or router.
 
+> 🤖 The firmware and web portal were built together with **Claude** (Anthropic) 
+
 ## Features
 
 - **TCP ⇄ UART bridge** on port `8888` (default) — connect with `telnet`, `nc`, PuTTY, or SecureCRT just like a regular COM port.
@@ -88,8 +90,6 @@ Uncomment to enable a one-hour IP lockout after 3 wrong password attempts (only 
 - The session password is sent over TCP in plain text — this is meant for a trusted local network, not for direct exposure to the internet.
 - The web portal itself has no login — restrict access to it at the network level (VLAN, ACL, White List).
 - Scanning for Wi-Fi networks blocks the TCP bridge and web portal for a few seconds — keep that in mind if you change networks during an active console session.
-
-> 🤖 The firmware and web portal were built together with **Claude** (Anthropic) 
 
 ## License
 
