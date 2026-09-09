@@ -118,6 +118,10 @@ int filterTelnetIAC(uint8_t *buf, int len) {
 // =========================================================================
 String g_ssid = "";
 String g_staPassword = "";
+bool   g_eapEnabled = false;
+String g_eapIdentity = "";
+String g_eapUsername = "";
+String g_eapPassword = "";
 long   g_uartBaud = DEFAULT_UART_BAUD;
 String g_language = "ru"; // "ru" | "en"
 
@@ -156,7 +160,10 @@ enum TKey {
   T_UART_SPEED_HINT, T_SAVE_BUTTON, T_BACK_TO_STATUS,
   T_WIFI_TITLE, T_CURRENT_NETWORK, T_SCAN_BUTTON, T_SCANNING_HINT, T_SELECT_NETWORK, T_MANUAL_SSID,
   T_MANUAL_SSID_HINT, T_WIFI_PASSWORD, T_WIFI_PASSWORD_HINT, T_SAVE_REBOOT_BUTTON, T_RESET_WIFI_HINT,
-  T_LANG_SWITCH, T_WIFI_OPEN_LABEL, T_MAC_ADDRESS, T_KEY_COUNT
+  T_LANG_SWITCH, T_WIFI_OPEN_LABEL, T_MAC_ADDRESS,
+  T_NETWORK_TYPE, T_SECURITY_PSK, T_SECURITY_ENTERPRISE, T_EAP_IDENTITY, T_EAP_IDENTITY_HINT,
+  T_EAP_USERNAME, T_EAP_PASSWORD, T_EAP_PASSWORD_HINT,
+  T_KEY_COUNT
 };
 const char* T_RU[T_KEY_COUNT] = {
   /*TITLE*/ "ESP32 Console Server",
@@ -225,7 +232,15 @@ const char* T_RU[T_KEY_COUNT] = {
   /*RESET_WIFI_HINT*/ "\u0423\u0434\u0430\u043b\u0438\u0442 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u0443\u044e \u0441\u0435\u0442\u044c \u0438 \u043f\u0435\u0440\u0435\u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u043e \u0432 \u0440\u0435\u0436\u0438\u043c \u0441\u043e\u0431\u0441\u0442\u0432\u0435\u043d\u043d\u043e\u0439 \u0442\u043e\u0447\u043a\u0438 \u0434\u043e\u0441\u0442\u0443\u043f\u0430 192.168.4.1.",
   /*LANG_SWITCH*/ "English",
   /*WIFI_OPEN_LABEL*/ "\u042d\u0442\u043e \u043e\u0442\u043a\u0440\u044b\u0442\u0430\u044f \u0441\u0435\u0442\u044c (\u0431\u0435\u0437 \u043f\u0430\u0440\u043e\u043b\u044f)",
-  /*MAC_ADDRESS*/ "MAC-\u0430\u0434\u0440\u0435\u0441"
+  /*MAC_ADDRESS*/ "MAC-\u0430\u0434\u0440\u0435\u0441",
+  /*NETWORK_TYPE*/ "\u0422\u0438\u043f \u0441\u0435\u0442\u0438",
+  /*SECURITY_PSK*/ "\u041e\u0431\u044b\u0447\u043d\u0430\u044f (\u043f\u0430\u0440\u043e\u043b\u044c \u0438\u043b\u0438 \u043e\u0442\u043a\u0440\u044b\u0442\u0430\u044f)",
+  /*SECURITY_ENTERPRISE*/ "WPA2-Enterprise (802.1X)",
+  /*EAP_IDENTITY*/ "Identity",
+  /*EAP_IDENTITY_HINT*/ "\u041e\u0431\u044b\u0447\u043d\u043e \u0441\u043e\u0432\u043f\u0430\u0434\u0430\u0435\u0442 \u0441 \u0438\u043c\u0435\u043d\u0435\u043c \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f. \u0424\u043e\u0440\u043c\u0430\u0442 \u0437\u0430\u0432\u0438\u0441\u0438\u0442 \u043e\u0442 \u043e\u0440\u0433\u0430\u043d\u0438\u0437\u0430\u0446\u0438\u0438 (\u043d\u0430\u043f\u0440\u0438\u043c\u0435\u0440, user@domain \u0438\u043b\u0438 DOMAIN\\user). \u041f\u0443\u0441\u0442\u043e\u0435 \u043f\u043e\u043b\u0435 = \u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0442\u0435\u043a\u0443\u0449\u0435\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435.",
+  /*EAP_USERNAME*/ "\u0418\u043c\u044f \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f",
+  /*EAP_PASSWORD*/ "\u041f\u0430\u0440\u043e\u043b\u044c",
+  /*EAP_PASSWORD_HINT*/ "\u041f\u0443\u0441\u0442\u043e\u0435 \u043f\u043e\u043b\u0435 = \u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c. \u041f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u044e\u0442\u0441\u044f PEAP/MSCHAPv2 \u0431\u0435\u0437 CA-\u0441\u0435\u0440\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u0430; \u0435\u0441\u043b\u0438 \u0441\u0435\u0442\u044c \u0442\u0440\u0435\u0431\u0443\u0435\u0442 EAP-TLS \u0438\u043b\u0438 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0443 \u0441\u0435\u0440\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0430 \u2014 \u044d\u0442\u0430 \u0441\u0445\u0435\u043c\u0430 \u043d\u0435 \u043f\u043e\u0434\u043e\u0439\u0434\u0451\u0442."
 };
 const char* T_EN[T_KEY_COUNT] = {
   "ESP32 Console Server", "WiFi \u2192 COM bridge", "CONSOLE", "State", "Free", "Busy", "Client", "\u2014",
@@ -245,7 +260,11 @@ const char* T_EN[T_KEY_COUNT] = {
   "Select a network", "Or enter manually (SSID)", "Fill in if the network is hidden or wasn't found by the scan.",
   "Network password", "Leave blank to keep the currently saved password. For an open network with no password, check the box below.", "Save and restart",
   "Deletes the saved network and restarts the device into its own access point at 192.168.4.1.",
-  "\u0420\u0443\u0441\u0441\u043a\u0438\u0439", "This is an open network (no password)", "MAC address"
+  "\u0420\u0443\u0441\u0441\u043a\u0438\u0439", "This is an open network (no password)", "MAC address",
+  "Network type", "Regular (password or open)", "WPA2-Enterprise (802.1X)", "Identity",
+  "Usually the same as the username. Format depends on the organization (e.g. user@domain or DOMAIN\\user). Leave blank to keep the current value.",
+  "Username", "Password",
+  "Leave blank to keep the currently saved password. Supports PEAP/MSCHAPv2 without a CA certificate; if the network requires EAP-TLS or server certificate validation, this setup won't work."
 };
 String T(int k) { return String(g_language == "en" ? T_EN[k] : T_RU[k]); }
 
@@ -304,6 +323,10 @@ void loadSettings() {
   prefs.begin(NVS_NS, true);
   g_ssid        = prefs.getString("ssid", DEFAULT_SSID);
   g_staPassword = prefs.getString("stapass", DEFAULT_PASSWORD);
+  g_eapEnabled  = prefs.getBool("eap_en", false);
+  g_eapIdentity = prefs.getString("eap_id", "");
+  g_eapUsername = prefs.getString("eap_user", "");
+  g_eapPassword = prefs.getString("eap_pass", "");
   g_uartBaud    = prefs.getLong("baud", DEFAULT_UART_BAUD);
   g_language    = prefs.getString("lang", "ru");
   g_authPassword = prefs.getString("authpass", "");
@@ -332,6 +355,10 @@ void saveWifiSettings() {
   prefs.begin(NVS_NS, false);
   prefs.putString("ssid", g_ssid);
   prefs.putString("stapass", g_staPassword);
+  prefs.putBool("eap_en", g_eapEnabled);
+  prefs.putString("eap_id", g_eapIdentity);
+  prefs.putString("eap_user", g_eapUsername);
+  prefs.putString("eap_pass", g_eapPassword);
   prefs.putLong("baud", g_uartBaud);
   prefs.end();
 }
@@ -422,6 +449,7 @@ void handleRoot() {
   html += "<div class='card'><h3>" + T(T_CARD_WIFI) + "</h3>";
   html += row(T(T_MODE), apMode ? T(T_MODE_AP) : T(T_MODE_STA));
   html += row(T(T_NETWORK), apMode ? String(apSsid) : g_ssid);
+  if (!apMode) html += row(T(T_NETWORK_TYPE), g_eapEnabled ? T(T_SECURITY_ENTERPRISE) : T(T_SECURITY_PSK));
   html += row(T(T_IP_ADDRESS), apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString());
   html += row(T(T_MAC_ADDRESS), apMode ? WiFi.softAPmacAddress() : WiFi.macAddress());
   if (apMode) html += row(T(T_AP_CLIENTS), String(WiFi.softAPgetStationNum()));
@@ -544,6 +572,7 @@ void handleWifiGet() {
   html += "<div class='section'><h3 style='text-transform:none;font-size:13px;color:#7b8494'>" + T(T_CURRENT_NETWORK) + "</h3>";
   html += row(T(T_MODE), apMode ? T(T_MODE_AP) : T(T_MODE_STA));
   html += row(T(T_NETWORK), apMode ? String(apSsid) : g_ssid);
+  if (!apMode) html += row(T(T_NETWORK_TYPE), g_eapEnabled ? T(T_SECURITY_ENTERPRISE) : T(T_SECURITY_PSK));
   html += row(T(T_IP_ADDRESS), apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString());
   html += row(T(T_MAC_ADDRESS), apMode ? WiFi.softAPmacAddress() : WiFi.macAddress());
   html += "</div>";
@@ -565,6 +594,17 @@ void handleWifiGet() {
   html += "<p class='hint'>" + T(T_WIFI_PASSWORD_HINT) + "</p>";
   html += "<label style='display:flex;align-items:center;gap:8px;margin-bottom:12px'><input type='checkbox' name='wifi_open' style='width:auto;margin:0'> " + T(T_WIFI_OPEN_LABEL) + "</label>";
   html += "</div>";
+
+  html += "<div class='section'><label>" + T(T_NETWORK_TYPE) + "</label>";
+  html += "<label style='display:flex;align-items:center;gap:8px'><input type='radio' name='sec_mode' value='psk' style='width:auto;margin:0'" + String(!g_eapEnabled ? " checked" : "") + " onclick=\"document.getElementById('eapblock').style.display='none'\"> " + T(T_SECURITY_PSK) + "</label>";
+  html += "<label style='display:flex;align-items:center;gap:8px;margin-bottom:12px'><input type='radio' name='sec_mode' value='enterprise' style='width:auto;margin:0'" + String(g_eapEnabled ? " checked" : "") + " onclick=\"document.getElementById('eapblock').style.display='block'\"> " + T(T_SECURITY_ENTERPRISE) + "</label>";
+  html += "<div id='eapblock' style='display:" + String(g_eapEnabled ? "block" : "none") + "'>";
+  html += "<label>" + T(T_EAP_IDENTITY) + "</label><input type='text' name='eap_identity' value='" + htmlEscape(g_eapIdentity) + "'>";
+  html += "<p class='hint'>" + T(T_EAP_IDENTITY_HINT) + "</p>";
+  html += "<label>" + T(T_EAP_USERNAME) + "</label><input type='text' name='eap_username' value='" + htmlEscape(g_eapUsername) + "'>";
+  html += "<label>" + T(T_EAP_PASSWORD) + "</label><input type='text' name='eap_password' value=''>";
+  html += "<p class='hint'>" + T(T_EAP_PASSWORD_HINT) + "</p>";
+  html += "</div></div>";
 
   html += "<div class='section'>" + uartSpeedSelect() + "</div>";
 
@@ -593,6 +633,17 @@ void handleWifiPost() {
   }
   // иначе поле пустое и галочка не стоит — оставляем ранее сохранённый пароль как есть
 
+  g_eapEnabled = (webServer.arg("sec_mode") == "enterprise");
+  if (g_eapEnabled) {
+    String identity = webServer.arg("eap_identity");
+    String username = webServer.arg("eap_username");
+    String eapPass  = webServer.arg("eap_password");
+    if (identity.length() > 0) g_eapIdentity = identity;
+    if (username.length() > 0) g_eapUsername = username;
+    if (eapPass.length() > 0) g_eapPassword = eapPass;
+    // пустые поля — оставляем ранее сохранённые значения как есть
+  }
+
   long newBaud = webServer.arg("baud").toInt();
   if (newBaud > 0) g_uartBaud = newBaud; // применится при перезапуске вместе с новой сетью
 
@@ -605,9 +656,17 @@ void handleWifiPost() {
 void handleWifiReset() {
   g_ssid = "";
   g_staPassword = "";
+  g_eapEnabled = false;
+  g_eapIdentity = "";
+  g_eapUsername = "";
+  g_eapPassword = "";
   prefs.begin(NVS_NS, false);
   prefs.putString("ssid", "");
   prefs.putString("stapass", "");
+  prefs.putBool("eap_en", false);
+  prefs.putString("eap_id", "");
+  prefs.putString("eap_user", "");
+  prefs.putString("eap_pass", "");
   prefs.end();
   webServer.send(200, "text/plain", "Reset. Rebooting...");
   delay(300);
@@ -654,6 +713,17 @@ void setupWebPortal() {
   Serial.println("[SYSTEM] Web-portal started on port " + String(webPort));
 }
 
+// Запускает подключение к целевой Wi-Fi сети — обычной (PSK/открытой) или WPA2-Enterprise (802.1X),
+// в зависимости от сохранённых настроек. WiFi.mode(WIFI_STA) должен быть выставлен заранее.
+void startStaConnect() {
+  if (g_eapEnabled) {
+    // PEAP/MSCHAPv2 без CA-сертификата — самый распространённый минимальный вариант Enterprise-сети
+    WiFi.begin(g_ssid.c_str(), WPA2_AUTH_PEAP, g_eapIdentity.c_str(), g_eapUsername.c_str(), g_eapPassword.c_str());
+  } else {
+    WiFi.begin(g_ssid.c_str(), g_staPassword.c_str());
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
@@ -687,8 +757,8 @@ void setup() {
   } else {
     WiFi.mode(WIFI_STA);
     WiFi.setTxPower(WIFI_POWER_8_5dBm);
-    WiFi.begin(g_ssid.c_str(), g_staPassword.c_str());
-    Serial.print("[SYSTEM] Connecting to \"" + g_ssid + "\"");
+    startStaConnect();
+    Serial.print("[SYSTEM] Connecting to \"" + g_ssid + "\"" + (g_eapEnabled ? " (WPA2-Enterprise)" : ""));
     unsigned long connectStarted = millis();
     while (WiFi.status() != WL_CONNECTED && (millis() - connectStarted) < wifiConnectTimeoutMs) {
       delay(500);
@@ -704,7 +774,7 @@ void setup() {
       delay(300);
       WiFi.mode(WIFI_STA);
       delay(100);
-      WiFi.begin(g_ssid.c_str(), g_staPassword.c_str());
+      startStaConnect();
       Serial.print("[SYSTEM] Retrying connection to \"" + g_ssid + "\"");
       connectStarted = millis();
       while (WiFi.status() != WL_CONNECTED && (millis() - connectStarted) < wifiConnectTimeoutMs) {
