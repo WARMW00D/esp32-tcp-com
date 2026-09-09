@@ -590,14 +590,16 @@ void handleWifiGet() {
   }
   html += "<label style='margin-top:12px'>" + T(T_MANUAL_SSID) + "</label><input type='text' name='ssid_manual' placeholder='SSID'>";
   html += "<p class='hint'>" + T(T_MANUAL_SSID_HINT) + "</p>";
+  html += "</div>";
+
+  html += "<div class='section'><label>" + T(T_NETWORK_TYPE) + "</label>";
+  html += "<label style='display:flex;align-items:center;gap:8px'><input type='radio' name='sec_mode' value='psk' style='width:auto;margin:0'" + String(!g_eapEnabled ? " checked" : "") + " onclick=\"document.getElementById('pskblock').style.display='block';document.getElementById('eapblock').style.display='none'\"> " + T(T_SECURITY_PSK) + "</label>";
+  html += "<label style='display:flex;align-items:center;gap:8px;margin-bottom:12px'><input type='radio' name='sec_mode' value='enterprise' style='width:auto;margin:0'" + String(g_eapEnabled ? " checked" : "") + " onclick=\"document.getElementById('pskblock').style.display='none';document.getElementById('eapblock').style.display='block'\"> " + T(T_SECURITY_ENTERPRISE) + "</label>";
+  html += "<div id='pskblock' style='display:" + String(!g_eapEnabled ? "block" : "none") + "'>";
   html += "<label>" + T(T_WIFI_PASSWORD) + "</label><input type='text' name='wifi_pass' value=''>";
   html += "<p class='hint'>" + T(T_WIFI_PASSWORD_HINT) + "</p>";
   html += "<label style='display:flex;align-items:center;gap:8px;margin-bottom:12px'><input type='checkbox' name='wifi_open' style='width:auto;margin:0'> " + T(T_WIFI_OPEN_LABEL) + "</label>";
   html += "</div>";
-
-  html += "<div class='section'><label>" + T(T_NETWORK_TYPE) + "</label>";
-  html += "<label style='display:flex;align-items:center;gap:8px'><input type='radio' name='sec_mode' value='psk' style='width:auto;margin:0'" + String(!g_eapEnabled ? " checked" : "") + " onclick=\"document.getElementById('eapblock').style.display='none'\"> " + T(T_SECURITY_PSK) + "</label>";
-  html += "<label style='display:flex;align-items:center;gap:8px;margin-bottom:12px'><input type='radio' name='sec_mode' value='enterprise' style='width:auto;margin:0'" + String(g_eapEnabled ? " checked" : "") + " onclick=\"document.getElementById('eapblock').style.display='block'\"> " + T(T_SECURITY_ENTERPRISE) + "</label>";
   html += "<div id='eapblock' style='display:" + String(g_eapEnabled ? "block" : "none") + "'>";
   html += "<label>" + T(T_EAP_IDENTITY) + "</label><input type='text' name='eap_identity' value='" + htmlEscape(g_eapIdentity) + "'>";
   html += "<p class='hint'>" + T(T_EAP_IDENTITY_HINT) + "</p>";
