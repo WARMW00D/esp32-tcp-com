@@ -47,6 +47,8 @@ const int baudOptionsCount = sizeof(baudOptions) / sizeof(baudOptions[0]);
 // =========================================================================
 #define RX1_PIN 20 // GPIO20 -> TXD платы MAX3232
 #define TX1_PIN 21 // GPIO21 -> RXD платы MAX3232
+#define BOOT_BUTTON_PIN 9 // штатная кнопка BOOT на ESP32-C3 SuperMini
+#define BOOT_RESET_HOLD_MS 5000 // сколько держать BOOT, чтобы сбросить Wi-Fi и пароль портала
 
 WiFiServer server(port);
 WiFiClient client;
@@ -68,6 +70,7 @@ uint8_t bridgeBuf[BRIDGE_BUF_SIZE];
 // --- Минимальный фильтр Telnet IAC (чтобы согласование эха не улетало в UART) ---
 enum TelnetState { TN_DATA, TN_IAC, TN_CMD, TN_SB };
 TelnetState telnetState = TN_DATA;
+String g_authInputBuffer = ""; // накопитель для ввода пароля сессии, очищается при каждом новом подключении
 const uint8_t TELNET_NEGOTIATION[] = { 0xFF, 0xFB, 0x01,  // IAC WILL ECHO — просим клиент отключить локальное эхо
                                         0xFF, 0xFB, 0x03 }; // IAC WILL SUPPRESS_GO_AHEAD
 
@@ -122,6 +125,9 @@ bool   g_eapEnabled = false;
 String g_eapIdentity = "";
 String g_eapUsername = "";
 String g_eapPassword = "";
+
+String g_portalPassword = "";        // "" и флаг ниже выключены => портал без пароля
+bool   g_portalUseSessionPass = false; // true => портал использует тот же пароль, что и консоль (g_authPassword)
 long   g_uartBaud = DEFAULT_UART_BAUD;
 String g_language = "ru"; // "ru" | "en"
 
@@ -163,6 +169,7 @@ enum TKey {
   T_LANG_SWITCH, T_WIFI_OPEN_LABEL, T_MAC_ADDRESS,
   T_NETWORK_TYPE, T_SECURITY_PSK, T_SECURITY_ENTERPRISE, T_EAP_IDENTITY, T_EAP_IDENTITY_HINT,
   T_EAP_USERNAME, T_EAP_PASSWORD, T_EAP_PASSWORD_HINT,
+  T_PORTAL_PASSWORD_TITLE, T_PORTAL_PASSWORD_HINT, T_PORTAL_USE_SESSION_LABEL, T_PORTAL_PASSWORD_LABEL,
   T_KEY_COUNT
 };
 const char* T_RU[T_KEY_COUNT] = {
@@ -240,7 +247,11 @@ const char* T_RU[T_KEY_COUNT] = {
   /*EAP_IDENTITY_HINT*/ "\u041e\u0431\u044b\u0447\u043d\u043e \u0441\u043e\u0432\u043f\u0430\u0434\u0430\u0435\u0442 \u0441 \u0438\u043c\u0435\u043d\u0435\u043c \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f. \u0424\u043e\u0440\u043c\u0430\u0442 \u0437\u0430\u0432\u0438\u0441\u0438\u0442 \u043e\u0442 \u043e\u0440\u0433\u0430\u043d\u0438\u0437\u0430\u0446\u0438\u0438 (\u043d\u0430\u043f\u0440\u0438\u043c\u0435\u0440, user@domain \u0438\u043b\u0438 DOMAIN\\user). \u041f\u0443\u0441\u0442\u043e\u0435 \u043f\u043e\u043b\u0435 = \u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0442\u0435\u043a\u0443\u0449\u0435\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435.",
   /*EAP_USERNAME*/ "\u0418\u043c\u044f \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f",
   /*EAP_PASSWORD*/ "\u041f\u0430\u0440\u043e\u043b\u044c",
-  /*EAP_PASSWORD_HINT*/ "\u041f\u0443\u0441\u0442\u043e\u0435 \u043f\u043e\u043b\u0435 = \u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c. \u041f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u044e\u0442\u0441\u044f PEAP/MSCHAPv2 \u0431\u0435\u0437 CA-\u0441\u0435\u0440\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u0430; \u0435\u0441\u043b\u0438 \u0441\u0435\u0442\u044c \u0442\u0440\u0435\u0431\u0443\u0435\u0442 EAP-TLS \u0438\u043b\u0438 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0443 \u0441\u0435\u0440\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0430 \u2014 \u044d\u0442\u0430 \u0441\u0445\u0435\u043c\u0430 \u043d\u0435 \u043f\u043e\u0434\u043e\u0439\u0434\u0451\u0442."
+  /*EAP_PASSWORD_HINT*/ "\u041f\u0443\u0441\u0442\u043e\u0435 \u043f\u043e\u043b\u0435 = \u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c. \u041f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u044e\u0442\u0441\u044f PEAP/MSCHAPv2 \u0431\u0435\u0437 CA-\u0441\u0435\u0440\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u0430; \u0435\u0441\u043b\u0438 \u0441\u0435\u0442\u044c \u0442\u0440\u0435\u0431\u0443\u0435\u0442 EAP-TLS \u0438\u043b\u0438 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0443 \u0441\u0435\u0440\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0430 \u2014 \u044d\u0442\u0430 \u0441\u0445\u0435\u043c\u0430 \u043d\u0435 \u043f\u043e\u0434\u043e\u0439\u0434\u0451\u0442.",
+  /*PORTAL_PASSWORD_TITLE*/ "\u041f\u0430\u0440\u043e\u043b\u044c \u043d\u0430 \u0432\u0435\u0431-\u043f\u043e\u0440\u0442\u0430\u043b",
+  /*PORTAL_PASSWORD_HINT*/ "\u0417\u0430\u0449\u0438\u0449\u0430\u0435\u0442 \u0434\u043e\u0441\u0442\u0443\u043f \u043a \u044d\u0442\u043e\u043c\u0443 \u0432\u0435\u0431-\u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0443, \u043a\u043e\u0433\u0434\u0430 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u043e \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u043e \u043a \u0440\u0430\u0431\u043e\u0447\u0435\u0439 \u0441\u0435\u0442\u0438 (\u043d\u0430 \u043d\u0430\u0447\u0430\u043b\u044c\u043d\u043e\u043c \u043f\u043e\u0440\u0442\u0430\u043b\u0435 \u0442\u043e\u0447\u043a\u0438 \u0434\u043e\u0441\u0442\u0443\u043f\u0430 \u043d\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442). \u041b\u043e\u0433\u0438\u043d \u0432 \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u043d\u043e\u043c \u0437\u0430\u043f\u0440\u043e\u0441\u0435 \u2014 admin. \u0421\u0431\u0440\u0430\u0441\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0434\u043e\u043b\u0433\u0438\u043c \u0443\u0434\u0435\u0440\u0436\u0430\u043d\u0438\u0435\u043c \u043a\u043d\u043e\u043f\u043a\u0438 BOOT \u043d\u0430 \u043f\u043b\u0430\u0442\u0435 (5 \u0441\u0435\u043a\u0443\u043d\u0434) \u0432\u043c\u0435\u0441\u0442\u0435 \u0441 Wi-Fi \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0430\u043c\u0438.",
+  /*PORTAL_USE_SESSION_LABEL*/ "\u0418\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c \u0442\u043e\u0442 \u0436\u0435 \u043f\u0430\u0440\u043e\u043b\u044c, \u0447\u0442\u043e \u0438 \u043d\u0430 \u0441\u0435\u0441\u0441\u0438\u044e \u043a\u043e\u043d\u0441\u043e\u043b\u0438 (\u0432\u044b\u0448\u0435)",
+  /*PORTAL_PASSWORD_LABEL*/ "\u041e\u0442\u0434\u0435\u043b\u044c\u043d\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c \u043d\u0430 \u043f\u043e\u0440\u0442\u0430\u043b"
 };
 const char* T_EN[T_KEY_COUNT] = {
   "ESP32 Console Server", "WiFi \u2192 COM bridge", "CONSOLE", "State", "Free", "Busy", "Client", "\u2014",
@@ -264,7 +275,11 @@ const char* T_EN[T_KEY_COUNT] = {
   "Network type", "Regular (password or open)", "WPA2-Enterprise (802.1X)", "Identity",
   "Usually the same as the username. Format depends on the organization (e.g. user@domain or DOMAIN\\user). Leave blank to keep the current value.",
   "Username", "Password",
-  "Leave blank to keep the currently saved password. Supports PEAP/MSCHAPv2 without a CA certificate; if the network requires EAP-TLS or server certificate validation, this setup won't work."
+  "Leave blank to keep the currently saved password. Supports PEAP/MSCHAPv2 without a CA certificate; if the network requires EAP-TLS or server certificate validation, this setup won't work.",
+  "Web portal password",
+  "Protects access to this web interface once the device is connected to a working network (does not apply to the initial access-point setup portal). Browser login is 'admin'. Resettable by holding the BOOT button on the board for 5 seconds, along with the Wi-Fi settings.",
+  "Use the same password as the console session (above)",
+  "Separate portal password"
 };
 String T(int k) { return String(g_language == "en" ? T_EN[k] : T_RU[k]); }
 
@@ -335,6 +350,8 @@ void loadSettings() {
   g_staticIpStr   = prefs.getString("static_ip", "");
   g_staticMaskStr = prefs.getString("static_mask", "255.255.255.0");
   g_staticGwStr   = prefs.getString("static_gw", "");
+  g_portalPassword = prefs.getString("portal_pass", "");
+  g_portalUseSessionPass = prefs.getBool("portal_use_sess", false);
   prefs.end();
   rebuildWhiteList();
 }
@@ -348,6 +365,8 @@ void saveSecuritySettings() {
   prefs.putString("static_mask", g_staticMaskStr);
   prefs.putString("static_gw", g_staticGwStr);
   prefs.putLong("baud", g_uartBaud);
+  prefs.putString("portal_pass", g_portalPassword);
+  prefs.putBool("portal_use_sess", g_portalUseSessionPass);
   prefs.end();
 }
 
@@ -366,6 +385,19 @@ void saveWifiSettings() {
 void applyUartBaud(long baud) {
   g_uartBaud = baud;
   Serial1.updateBaudRate(g_uartBaud); // применяется мгновенно, без перезапуска UART
+}
+
+// Проверка доступа к порталу. На начальном портале (режим AP при первой настройке) пароль не спрашивается —
+// иначе можно было бы случайно заблокировать себе доступ к самой настройке. Действует только в STA-режиме.
+bool checkPortalAuth() {
+  if (apMode) return true;
+  String pass = g_portalUseSessionPass ? g_authPassword : g_portalPassword;
+  if (pass.length() == 0) return true; // пароль на портал не задан
+  if (!webServer.authenticate("admin", pass.c_str())) {
+    webServer.requestAuthentication();
+    return false;
+  }
+  return true;
 }
 
 // =========================================================================
@@ -427,6 +459,7 @@ String topBar(String currentPath) {
 }
 
 void handleRoot() {
+  if (!checkPortalAuth()) return;
   bool connected = client && client.connected();
   String html = pageHeader(T(T_TITLE));
   html += topBar("/");
@@ -442,6 +475,10 @@ void handleRoot() {
 
   html += "<div class='card'><h3>" + T(T_CARD_SESSION) + "</h3>";
   html += row(T(T_SESSION_PASSWORD), badge(g_authPassword.length() > 0 ? T(T_ENABLED) : T(T_DISABLED), g_authPassword.length() > 0));
+  {
+    bool portalProtected = (g_portalUseSessionPass ? g_authPassword.length() > 0 : g_portalPassword.length() > 0);
+    html += row(T(T_PORTAL_PASSWORD_TITLE), badge(portalProtected ? T(T_ENABLED) : T(T_DISABLED), portalProtected));
+  }
   html += row(T(T_WHITELIST), g_whiteCount > 0 ? badge(String(g_whiteCount) + T(T_NETWORKS_SUFFIX), true) : badge(T(T_DISABLED), false));
   html += row(T(T_STATICIP), g_staticIpEnabled ? g_staticIpStr : T(T_DHCP));
   html += "</div>";
@@ -492,6 +529,7 @@ String uartSpeedSelect() {
 }
 
 void handleSettingsGet() {
+  if (!checkPortalAuth()) return;
   String html = pageHeader(T(T_SETTINGS_TITLE));
   html += topBar("/settings");
   html += "<h2>" + T(T_SETTINGS_TITLE) + "</h2>";
@@ -503,6 +541,13 @@ void handleSettingsGet() {
   html += "<p class='hint'>" + T(T_SESSION_PASSWORD_HINT) + "</p>";
   html += "<input type='text' name='authpass' value='" + htmlEscape(g_authPassword) + "'>";
   html += "</div>";
+
+  html += "<div class='section'><label>" + T(T_PORTAL_PASSWORD_TITLE) + "</label>";
+  html += "<p class='hint'>" + T(T_PORTAL_PASSWORD_HINT) + "</p>";
+  html += "<label style='display:flex;align-items:center;gap:8px'><input type='checkbox' id='portalUseSess' name='portal_use_session' style='width:auto;margin:0'" + String(g_portalUseSessionPass ? " checked" : "") + " onclick=\"document.getElementById('portalpassblock').style.display=this.checked?'none':'block'\"> " + T(T_PORTAL_USE_SESSION_LABEL) + "</label>";
+  html += "<div id='portalpassblock' style='display:" + String(g_portalUseSessionPass ? "none" : "block") + ";margin-top:10px'>";
+  html += "<label>" + T(T_PORTAL_PASSWORD_LABEL) + "</label><input type='text' name='portal_pass' value='" + htmlEscape(g_portalPassword) + "'>";
+  html += "</div></div>";
 
   html += "<div class='section'><label>" + T(T_WHITELIST_TITLE) + "</label>";
   html += "<p class='hint'>" + T(T_WHITELIST_HINT) + "</p>";
@@ -526,7 +571,10 @@ void handleSettingsGet() {
 }
 
 void handleSettingsPost() {
+  if (!checkPortalAuth()) return;
   g_authPassword = webServer.arg("authpass");
+  g_portalUseSessionPass = webServer.hasArg("portal_use_session");
+  g_portalPassword = webServer.arg("portal_pass");
   for (int i = 0; i < 5; i++) g_whiteListRaw[i] = webServer.arg("wl" + String(i));
   g_staticIpEnabled = webServer.hasArg("static_en");
   g_staticIpStr   = webServer.arg("static_ip");
@@ -562,6 +610,7 @@ void doWifiScan() {
 }
 
 void handleWifiGet() {
+  if (!checkPortalAuth()) return;
   if (webServer.hasArg("scan")) doWifiScan();
 
   String html = pageHeader(T(T_WIFI_TITLE));
@@ -621,6 +670,7 @@ void handleWifiGet() {
 }
 
 void handleWifiPost() {
+  if (!checkPortalAuth()) return;
   String manual = webServer.arg("ssid_manual");
   String picked = webServer.arg("ssid");
   String chosen = manual.length() > 0 ? manual : picked;
@@ -656,6 +706,7 @@ void handleWifiPost() {
 }
 
 void handleWifiReset() {
+  if (!checkPortalAuth()) return;
   g_ssid = "";
   g_staPassword = "";
   g_eapEnabled = false;
@@ -676,6 +727,7 @@ void handleWifiReset() {
 }
 
 void handleLang() {
+  if (!checkPortalAuth()) return;
   String set = webServer.arg("set");
   if (set == "en" || set == "ru") {
     g_language = set;
@@ -690,15 +742,74 @@ void handleLang() {
 }
 
 void handleKick() {
+  if (!checkPortalAuth()) return;
   if (client && client.connected()) kickRequested = true;
   webServer.sendHeader("Location", "/");
   webServer.send(303);
 }
 
 void handleRestart() {
+  if (!checkPortalAuth()) return;
   webServer.send(200, "text/plain", "Restarting...");
   delay(300);
   ESP.restart();
+}
+
+// Полный сброс через физическую кнопку BOOT: Wi-Fi (SSID/пароль/EAP) + пароль веб-портала.
+// Пароль на сессию консоли и остальные настройки (White List, Static IP, скорость UART) не трогаются.
+void factoryResetWifiAndPortal() {
+  g_ssid = "";
+  g_staPassword = "";
+  g_eapEnabled = false;
+  g_eapIdentity = "";
+  g_eapUsername = "";
+  g_eapPassword = "";
+  g_portalPassword = "";
+  g_portalUseSessionPass = false;
+  prefs.begin(NVS_NS, false);
+  prefs.putString("ssid", "");
+  prefs.putString("stapass", "");
+  prefs.putBool("eap_en", false);
+  prefs.putString("eap_id", "");
+  prefs.putString("eap_user", "");
+  prefs.putString("eap_pass", "");
+  prefs.putString("portal_pass", "");
+  prefs.putBool("portal_use_sess", false);
+  prefs.end();
+}
+
+// Опрашивается в loop(): удержание BOOT 5 секунд запускает сброс выше и перезагрузку.
+void checkBootButtonReset() {
+  static unsigned long pressStart = 0;
+  static bool wasPressed = false;
+  static bool triggered = false;
+  static unsigned long lastTickPrint = 0;
+  bool pressed = (digitalRead(BOOT_BUTTON_PIN) == LOW);
+  if (pressed) {
+    if (!wasPressed) {
+      wasPressed = true;
+      pressStart = millis();
+      triggered = false;
+      Serial.println("[DEBUG] BOOT button pressed (pin LOW detected)"); // ВРЕМЕННО, для диагностики
+    } else if (!triggered) {
+      unsigned long held = millis() - pressStart;
+      if (millis() - lastTickPrint > 1000) {
+        lastTickPrint = millis();
+        Serial.println("[DEBUG] BOOT held " + String(held / 1000) + "s..."); // ВРЕМЕННО
+      }
+      if (held >= BOOT_RESET_HOLD_MS) {
+        triggered = true;
+        Serial.println("[SYSTEM] BOOT held " + String(BOOT_RESET_HOLD_MS / 1000) + "s — resetting Wi-Fi and portal password...");
+        factoryResetWifiAndPortal();
+        delay(300);
+        ESP.restart();
+      }
+    }
+  } else {
+    if (wasPressed) Serial.println("[DEBUG] BOOT button released"); // ВРЕМЕННО
+    wasPressed = false;
+    triggered = false;
+  }
 }
 
 void setupWebPortal() {
@@ -730,6 +841,7 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.println("[SYSTEM] Reset reason: " + String(esp_reset_reason()));
+  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP); // штатная кнопка BOOT — удержание 5с сбрасывает Wi-Fi и пароль портала
   loadSettings();
   Serial1.setRxBufferSize(4096); // заводской буфер 256 байт слишком мал для быстрого "show run" и т.п.
   Serial1.setTxBufferSize(1024);
@@ -812,6 +924,7 @@ void setup() {
 void loop() {
   unsigned long currentMillis = millis();
 
+  checkBootButtonReset();
   webServer.handleClient();
 
   if (kickRequested) {
@@ -863,11 +976,13 @@ void loop() {
       client = newClient;
       client.setNoDelay(true);
       telnetState = TN_DATA; // сброс фильтра IAC для новой сессии
+      g_authInputBuffer = ""; // сброс накопителя пароля от предыдущей сессии
       client.write(TELNET_NEGOTIATION, sizeof(TELNET_NEGOTIATION)); // просим клиент отключить локальное эхо
       bool authRequired = (g_authPassword.length() > 0);
       if (authRequired) {
         isAuthenticated = false;
         client.println("AUTH_REQUIRED");
+        client.print("Password: ");
         Serial.print("[SYSTEM] Client connected, awaiting password: "); Serial.println(remoteIP.toString());
       } else {
         isAuthenticated = true;
@@ -882,8 +997,31 @@ void loop() {
     #ifdef USE_BAN_LIST
       int ipIdx = getIPRecordIndex(currentIP);
     #endif
-    if (client.available() > 0) {
-      String input = client.readStringUntil('\n');
+    while (client.available() > 0) {
+      uint8_t b = (uint8_t)client.read();
+      int kept = filterTelnetIAC(&b, 1); // тот же фильтр, что и в мосте — служебные IAC-байты клиента не попадают в пароль
+      if (kept == 0) continue; // байт был частью telnet-согласования, пропускаем
+      if (b == '\r') continue;
+
+      if (b == 0x08 || b == 0x7F) { // Backspace / Delete — стираем последний введённый символ
+        if (g_authInputBuffer.length() > 0) {
+          g_authInputBuffer.remove(g_authInputBuffer.length() - 1);
+          client.print("\b \b"); // визуально стереть звёздочку
+        }
+        continue;
+      }
+
+      if (b != '\n') {
+        if (g_authInputBuffer.length() < 128) { // защита от переполнения при мусоре в потоке
+          g_authInputBuffer += (char)b;
+          client.print('*');
+        }
+        continue;
+      }
+
+      client.print("\r\n"); // переход на новую строку после Enter
+      String input = g_authInputBuffer;
+      g_authInputBuffer = "";
       input.trim();
       if (input == g_authPassword) {
         isAuthenticated = true;
@@ -914,6 +1052,7 @@ void loop() {
         delay(100);
         client.stop();
       }
+      break; // соединение либо авторизовано, либо закрыто выше — дальше в этом заходе цикла разбирать нечего
     }
   }
 
