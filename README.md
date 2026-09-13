@@ -24,6 +24,9 @@ A remote COM port for console access to network equipment (Cisco and compatible)
 - **Optional IP lockout** after 3 wrong password attempts (enabled via a compile-time flag, see below).
 - All settings are stored in **NVS** (ESP32's non-volatile storage) and survive a reboot.
 
+![Main page](Main page.png)
+![WiFi settings](WiFi settings.png)
+
 ## Hardware
 
 | Component | Purpose |
