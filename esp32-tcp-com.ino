@@ -2,6 +2,7 @@
 #include <WebServer.h>
 #include <Preferences.h>
 #include <esp_system.h>
+#include <WireGuard-ESP32.h> // требует установки библиотеки WireGuard-ESP32-Arduino через Library Manager / .zip
 
 // =========================================================================
 // 1. ГЛОБАЛЬНЫЕ НАСТРОЙКИ РЕЖИМОВ (компилируемые)
@@ -128,6 +129,16 @@ String g_eapPassword = "";
 
 String g_portalPassword = "";        // "" и флаг ниже выключены => портал без пароля
 bool   g_portalUseSessionPass = false; // true => портал использует тот же пароль, что и консоль (g_authPassword)
+
+bool   g_vpnEnabled = false;
+String g_vpnPrivateKey = "";   // приватный ключ этого устройства (base64)
+String g_vpnPeerPublicKey = ""; // публичный ключ сервера-пира (base64)
+String g_vpnEndpoint = "";      // адрес/хост WireGuard-сервера
+int    g_vpnPort = 51820;
+String g_vpnLocalIp = "";       // IP этого устройства внутри VPN-подсети, например 10.0.0.2
+int    g_vpnKeepalive = 25;     // 0 = выключено
+static WireGuard g_wg;
+bool   g_vpnStarted = false; // отслеживаем, вызывали ли уже wg.begin() в этой сессии загрузки
 long   g_uartBaud = DEFAULT_UART_BAUD;
 String g_language = "ru"; // "ru" | "en"
 
@@ -170,6 +181,9 @@ enum TKey {
   T_NETWORK_TYPE, T_SECURITY_PSK, T_SECURITY_ENTERPRISE, T_EAP_IDENTITY, T_EAP_IDENTITY_HINT,
   T_EAP_USERNAME, T_EAP_PASSWORD, T_EAP_PASSWORD_HINT,
   T_PORTAL_PASSWORD_TITLE, T_PORTAL_PASSWORD_HINT, T_PORTAL_USE_SESSION_LABEL, T_PORTAL_PASSWORD_LABEL,
+  T_BTN_VPN, T_VPN_TITLE, T_VPN_ENABLE_LABEL, T_VPN_PRIVATE_KEY, T_VPN_PRIVATE_KEY_HINT,
+  T_VPN_PEER_PUBLIC_KEY, T_VPN_ENDPOINT, T_VPN_PORT, T_VPN_LOCAL_IP, T_VPN_LOCAL_IP_HINT,
+  T_VPN_KEEPALIVE, T_VPN_KEEPALIVE_HINT, T_VPN_STATUS, T_VPN_CONNECTED, T_VPN_NOT_CONNECTED, T_VPN_DISABLED,
   T_KEY_COUNT
 };
 const char* T_RU[T_KEY_COUNT] = {
@@ -251,7 +265,23 @@ const char* T_RU[T_KEY_COUNT] = {
   /*PORTAL_PASSWORD_TITLE*/ "\u041f\u0430\u0440\u043e\u043b\u044c \u043d\u0430 \u0432\u0435\u0431-\u043f\u043e\u0440\u0442\u0430\u043b",
   /*PORTAL_PASSWORD_HINT*/ "\u0417\u0430\u0449\u0438\u0449\u0430\u0435\u0442 \u0434\u043e\u0441\u0442\u0443\u043f \u043a \u044d\u0442\u043e\u043c\u0443 \u0432\u0435\u0431-\u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0443, \u043a\u043e\u0433\u0434\u0430 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u043e \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u043e \u043a \u0440\u0430\u0431\u043e\u0447\u0435\u0439 \u0441\u0435\u0442\u0438 (\u043d\u0430 \u043d\u0430\u0447\u0430\u043b\u044c\u043d\u043e\u043c \u043f\u043e\u0440\u0442\u0430\u043b\u0435 \u0442\u043e\u0447\u043a\u0438 \u0434\u043e\u0441\u0442\u0443\u043f\u0430 \u043d\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442). \u041b\u043e\u0433\u0438\u043d \u0432 \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u043d\u043e\u043c \u0437\u0430\u043f\u0440\u043e\u0441\u0435 \u2014 admin. \u0421\u0431\u0440\u0430\u0441\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0434\u043e\u043b\u0433\u0438\u043c \u0443\u0434\u0435\u0440\u0436\u0430\u043d\u0438\u0435\u043c \u043a\u043d\u043e\u043f\u043a\u0438 BOOT \u043d\u0430 \u043f\u043b\u0430\u0442\u0435 (5 \u0441\u0435\u043a\u0443\u043d\u0434) \u0432\u043c\u0435\u0441\u0442\u0435 \u0441 Wi-Fi \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0430\u043c\u0438.",
   /*PORTAL_USE_SESSION_LABEL*/ "\u0418\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c \u0442\u043e\u0442 \u0436\u0435 \u043f\u0430\u0440\u043e\u043b\u044c, \u0447\u0442\u043e \u0438 \u043d\u0430 \u0441\u0435\u0441\u0441\u0438\u044e \u043a\u043e\u043d\u0441\u043e\u043b\u0438 (\u0432\u044b\u0448\u0435)",
-  /*PORTAL_PASSWORD_LABEL*/ "\u041e\u0442\u0434\u0435\u043b\u044c\u043d\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c \u043d\u0430 \u043f\u043e\u0440\u0442\u0430\u043b"
+  /*PORTAL_PASSWORD_LABEL*/ "\u041e\u0442\u0434\u0435\u043b\u044c\u043d\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c \u043d\u0430 \u043f\u043e\u0440\u0442\u0430\u043b",
+  /*BTN_VPN*/ "WireGuard VPN",
+  /*VPN_TITLE*/ "WireGuard VPN",
+  /*VPN_ENABLE_LABEL*/ "Включить WireGuard-туннель",
+  /*VPN_PRIVATE_KEY*/ "Приватный ключ устройства",
+  /*VPN_PRIVATE_KEY_HINT*/ "Base64-ключ, сгенерированный командой wg genkey. Пустое поле = оставить текущий сохранённый.",
+  /*VPN_PEER_PUBLIC_KEY*/ "Публичный ключ сервера (пира)",
+  /*VPN_ENDPOINT*/ "Адрес сервера (endpoint)",
+  /*VPN_PORT*/ "Порт сервера",
+  /*VPN_LOCAL_IP*/ "IP этого устройства в VPN",
+  /*VPN_LOCAL_IP_HINT*/ "Внутренний адрес из подсети WireGuard, выданный для этого пира на сервере, например 10.0.0.2.",
+  /*VPN_KEEPALIVE*/ "Persistent keepalive (сек)",
+  /*VPN_KEEPALIVE_HINT*/ "0 = выключено. Если устройство за NAT — обычно ставят 25.",
+  /*VPN_STATUS*/ "Статус туннеля",
+  /*VPN_CONNECTED*/ "инициализирован",
+  /*VPN_NOT_CONNECTED*/ "не запущен",
+  /*VPN_DISABLED*/ "выключен"
 };
 const char* T_EN[T_KEY_COUNT] = {
   "ESP32 Console Server", "WiFi \u2192 COM bridge", "CONSOLE", "State", "Free", "Busy", "Client", "\u2014",
@@ -279,7 +309,23 @@ const char* T_EN[T_KEY_COUNT] = {
   "Web portal password",
   "Protects access to this web interface once the device is connected to a working network (does not apply to the initial access-point setup portal). Browser login is 'admin'. Resettable by holding the BOOT button on the board for 5 seconds, along with the Wi-Fi settings.",
   "Use the same password as the console session (above)",
-  "Separate portal password"
+  "Separate portal password",
+  "WireGuard VPN",
+  "WireGuard VPN",
+  "Enable WireGuard tunnel",
+  "Device private key",
+  "Base64 key generated with wg genkey. Leave blank to keep the currently saved one.",
+  "Server (peer) public key",
+  "Server address (endpoint)",
+  "Server port",
+  "This device's IP inside the VPN",
+  "The internal address from the WireGuard subnet assigned to this peer on the server, e.g. 10.0.0.2.",
+  "Persistent keepalive (sec)",
+  "0 = disabled. If the device is behind NAT, 25 is a common value.",
+  "Tunnel status",
+  "initialized",
+  "not started",
+  "disabled"
 };
 String T(int k) { return String(g_language == "en" ? T_EN[k] : T_RU[k]); }
 
@@ -352,6 +398,13 @@ void loadSettings() {
   g_staticGwStr   = prefs.getString("static_gw", "");
   g_portalPassword = prefs.getString("portal_pass", "");
   g_portalUseSessionPass = prefs.getBool("portal_use_sess", false);
+  g_vpnEnabled = prefs.getBool("vpn_en", false);
+  g_vpnPrivateKey = prefs.getString("vpn_priv", "");
+  g_vpnPeerPublicKey = prefs.getString("vpn_peer_pub", "");
+  g_vpnEndpoint = prefs.getString("vpn_endpoint", "");
+  g_vpnPort = prefs.getInt("vpn_port", 51820);
+  g_vpnLocalIp = prefs.getString("vpn_local_ip", "");
+  g_vpnKeepalive = prefs.getInt("vpn_keepalive", 25);
   prefs.end();
   rebuildWhiteList();
 }
@@ -367,6 +420,18 @@ void saveSecuritySettings() {
   prefs.putLong("baud", g_uartBaud);
   prefs.putString("portal_pass", g_portalPassword);
   prefs.putBool("portal_use_sess", g_portalUseSessionPass);
+  prefs.end();
+}
+
+void saveVpnSettings() {
+  prefs.begin(NVS_NS, false);
+  prefs.putBool("vpn_en", g_vpnEnabled);
+  prefs.putString("vpn_priv", g_vpnPrivateKey);
+  prefs.putString("vpn_peer_pub", g_vpnPeerPublicKey);
+  prefs.putString("vpn_endpoint", g_vpnEndpoint);
+  prefs.putInt("vpn_port", g_vpnPort);
+  prefs.putString("vpn_local_ip", g_vpnLocalIp);
+  prefs.putInt("vpn_keepalive", g_vpnKeepalive);
   prefs.end();
 }
 
@@ -513,6 +578,7 @@ void handleRoot() {
   html += "<form action='/restart' method='POST' style='display:inline'><button onclick='return confirm(\"" + T(T_CONFIRM_RESTART) + "\")'>" + T(T_BTN_RESTART) + "</button></form>";
   html += "<a class='btn' href='/settings'>" + T(T_BTN_SETTINGS) + "</a>";
   html += "<a class='btn' href='/wifi'>" + T(T_BTN_WIFI) + "</a>";
+  html += "<a class='btn' href='/vpn'>" + T(T_BTN_VPN) + "</a>";
   html += "<form action='/wifi/reset' method='POST' style='display:inline'><button class='btn-danger' onclick='return confirm(\"" + T(T_CONFIRM_RESET_WIFI) + "\")'>" + T(T_BTN_RESET_WIFI) + "</button></form>";
   html += "</div></body></html>";
 
@@ -812,6 +878,80 @@ void checkBootButtonReset() {
   }
 }
 
+// Запускает WireGuard-туннель, если он включён и настройки заполнены. Можно вызывать повторно —
+// используется и при старте (после успешного Wi-Fi), и сразу после сохранения настроек на портале.
+void startVpnConnect() {
+  if (!g_vpnEnabled) return;
+  if (g_vpnPrivateKey.length() == 0 || g_vpnPeerPublicKey.length() == 0 ||
+      g_vpnEndpoint.length() == 0 || g_vpnLocalIp.length() == 0) {
+    Serial.println("[WARNING] WireGuard enabled, but configuration is incomplete — skipping.");
+    g_vpnStarted = false;
+    return;
+  }
+  IPAddress localIp;
+  if (!localIp.fromString(g_vpnLocalIp)) {
+    Serial.println("[ERROR] WireGuard local IP is invalid: " + g_vpnLocalIp);
+    g_vpnStarted = false;
+    return;
+  }
+  bool ok = g_wg.begin(localIp, g_vpnPrivateKey.c_str(), g_vpnEndpoint.c_str(), g_vpnPeerPublicKey.c_str(), (uint16_t)g_vpnPort);
+  g_vpnStarted = ok;
+  Serial.println(ok ? "[SYSTEM] WireGuard tunnel initialized." : "[ERROR] WireGuard tunnel failed to initialize.");
+}
+
+void handleVpnGet() {
+  if (!checkPortalAuth()) return;
+  String html = pageHeader(T(T_VPN_TITLE));
+  html += topBar("/vpn");
+  html += "<h2>" + T(T_VPN_TITLE) + "</h2>";
+  if (webServer.hasArg("saved")) html += "<p style='color:#4ade80'>" + T(T_SAVED) + "</p>";
+
+  html += "<div class='section'>";
+  html += row(T(T_VPN_STATUS), g_vpnEnabled ? (g_vpnStarted ? T(T_VPN_CONNECTED) : T(T_VPN_NOT_CONNECTED)) : T(T_VPN_DISABLED));
+  html += "</div>";
+
+  html += "<form method='POST' action='/vpn'>";
+  html += "<div class='section'>";
+  html += "<label style='display:flex;align-items:center;gap:8px'><input type='checkbox' name='vpn_en' style='width:auto;margin:0'" + String(g_vpnEnabled ? " checked" : "") + "> " + T(T_VPN_ENABLE_LABEL) + "</label>";
+  html += "</div>";
+
+  html += "<div class='section'>";
+  html += "<label>" + T(T_VPN_PRIVATE_KEY) + "</label><input type='text' name='vpn_priv' value=''>";
+  html += "<p class='hint'>" + T(T_VPN_PRIVATE_KEY_HINT) + "</p>";
+  html += "<label>" + T(T_VPN_PEER_PUBLIC_KEY) + "</label><input type='text' name='vpn_peer_pub' value='" + htmlEscape(g_vpnPeerPublicKey) + "'>";
+  html += "<label>" + T(T_VPN_ENDPOINT) + "</label><input type='text' name='vpn_endpoint' value='" + htmlEscape(g_vpnEndpoint) + "' placeholder='vpn.example.com'>";
+  html += "<label>" + T(T_VPN_PORT) + "</label><input type='text' name='vpn_port' value='" + String(g_vpnPort) + "'>";
+  html += "<label>" + T(T_VPN_LOCAL_IP) + "</label><input type='text' name='vpn_local_ip' value='" + htmlEscape(g_vpnLocalIp) + "' placeholder='10.0.0.2'>";
+  html += "<p class='hint'>" + T(T_VPN_LOCAL_IP_HINT) + "</p>";
+  html += "<label>" + T(T_VPN_KEEPALIVE) + "</label><input type='text' name='vpn_keepalive' value='" + String(g_vpnKeepalive) + "'>";
+  html += "<p class='hint'>" + T(T_VPN_KEEPALIVE_HINT) + " (\u0445\u0440\u0430\u043d\u0438\u0442\u0441\u044f \u043a\u0430\u043a \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0430; \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u0437\u0430\u0432\u0438\u0441\u0438\u0442 \u043e\u0442 \u0432\u0435\u0440\u0441\u0438\u0438 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0438 WireGuard-ESP32).</p>";
+  html += "</div>";
+
+  html += "<button type='submit'>" + T(T_SAVE_BUTTON) + "</button></form>";
+  html += "<p style='margin-top:14px'><a href='/'>" + T(T_BACK_TO_STATUS) + "</a></p></body></html>";
+
+  webServer.send(200, "text/html", html);
+}
+
+void handleVpnPost() {
+  if (!checkPortalAuth()) return;
+  g_vpnEnabled = webServer.hasArg("vpn_en");
+  String priv = webServer.arg("vpn_priv");
+  if (priv.length() > 0) g_vpnPrivateKey = priv; // пусто = оставить сохранённый ключ
+  g_vpnPeerPublicKey = webServer.arg("vpn_peer_pub");
+  g_vpnEndpoint = webServer.arg("vpn_endpoint");
+  int port = webServer.arg("vpn_port").toInt();
+  if (port > 0) g_vpnPort = port;
+  g_vpnLocalIp = webServer.arg("vpn_local_ip");
+  g_vpnKeepalive = webServer.arg("vpn_keepalive").toInt();
+
+  saveVpnSettings();
+  if (g_vpnEnabled && !apMode) startVpnConnect(); // применяем сразу, без перезагрузки, если уже на рабочей сети
+
+  webServer.sendHeader("Location", "/vpn?saved=1");
+  webServer.send(303);
+}
+
 void setupWebPortal() {
   webServer.on("/", HTTP_GET, handleRoot);
   webServer.on("/settings", HTTP_GET, handleSettingsGet);
@@ -819,6 +959,8 @@ void setupWebPortal() {
   webServer.on("/wifi", HTTP_GET, handleWifiGet);
   webServer.on("/wifi", HTTP_POST, handleWifiPost);
   webServer.on("/wifi/reset", HTTP_POST, handleWifiReset);
+  webServer.on("/vpn", HTTP_GET, handleVpnGet);
+  webServer.on("/vpn", HTTP_POST, handleVpnPost);
   webServer.on("/lang", HTTP_GET, handleLang);
   webServer.on("/kick", HTTP_POST, handleKick);
   webServer.on("/restart", HTTP_POST, handleRestart);
@@ -900,6 +1042,7 @@ void setup() {
     if (WiFi.status() == WL_CONNECTED) {
       apMode = false;
       Serial.println("\n[SYSTEM] Connected. Current ESP32-C3 IP: " + WiFi.localIP().toString());
+      startVpnConnect();
     } else {
       apMode = true;
       WiFi.disconnect(true);
