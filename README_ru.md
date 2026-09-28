@@ -40,7 +40,7 @@
 
 ### Вариант 1 — ESP32-C3 Super Mini
 
-![Схема варианта 1](schema-esp32-c3-max3232.svg)
+![Схема варианта 1](schemes/schema-esp32-c3-max3232.svg)
 
 | ESP32-C3 | Модуль MAX3232 |
 |---|---|
