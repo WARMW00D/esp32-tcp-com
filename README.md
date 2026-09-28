@@ -40,7 +40,7 @@ Common parts: ESP32 Super Mini board, a MAX3232 (RS-232 ⇄ TTL) module with DB9
 
 ### Variant 1 — ESP32-C3 Super Mini
 
-![Variant 1 wiring](schema-esp32-c3-max3232.svg)
+![Variant 1 wiring](schemes/schema-esp32-c3-max3232.svg)
 
 | ESP32-C3 | MAX3232 module |
 |---|---|
