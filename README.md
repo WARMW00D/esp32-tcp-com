@@ -53,7 +53,7 @@ The MAX3232 is powered from the board's own AMS1117. This works with some MAX323
 
 ### Variant 2 — ESP32-S3 Super Mini + separate DC-DC
 
-![Variant 2 wiring](schema-esp32-s3-max3232-dcdc.svg)
+![Variant 2 wiring](schemes/schema-esp32-s3-max3232-dcdc.svg)
 
 | ESP32-S3 | Connects to |
 |---|---|
