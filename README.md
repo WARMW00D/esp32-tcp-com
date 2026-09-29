@@ -1,5 +1,7 @@
 # ESP32 Cisco Console Server (ESP32-C3 / ESP32-S3)
 
+[Русская версия](README_ru.md)
+
 A remote COM port for console access to network equipment (Cisco and compatible) over Wi-Fi. An ESP32 + MAX3232 turn a device's local console port into a TCP socket reachable over the network — no need to physically plug a laptop into every switch, router or access point.
 
 Two hardware variants share the same firmware logic:
