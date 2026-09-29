@@ -2,7 +2,9 @@
 #include <WebServer.h>
 #include <Preferences.h>
 #include <esp_system.h>
+#ifdef USE_WIREGUARD
 #include <WireGuard-ESP32.h> // требует установки библиотеки WireGuard-ESP32-Arduino через Library Manager / .zip
+#endif
 
 // =========================================================================
 // 1. ГЛОБАЛЬНЫЕ НАСТРОЙКИ РЕЖИМОВ (компилируемые)
@@ -11,6 +13,7 @@
 // интерфейса настраиваются в рантайме через веб-портал и хранятся в NVS.
 
 // #define USE_BAN_LIST         // Раскомментируйте для часовой блокировки IP после 3 ошибок пароля.
+// #define USE_WIREGUARD        // Раскомментируйте, чтобы включить страницу /vpn и клиент WireGuard (требует отдельной библиотеки, см. README).
 
 // =========================================================================
 // 2. ЗАВОДСКИЕ ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ (используются один раз, пока NVS пуст)
@@ -137,7 +140,9 @@ String g_vpnEndpoint = "";      // адрес/хост WireGuard-сервера
 int    g_vpnPort = 51820;
 String g_vpnLocalIp = "";       // IP этого устройства внутри VPN-подсети, например 10.0.0.2
 int    g_vpnKeepalive = 25;     // 0 = выключено
+#ifdef USE_WIREGUARD
 static WireGuard g_wg;
+#endif
 bool   g_vpnStarted = false; // отслеживаем, вызывали ли уже wg.begin() в этой сессии загрузки
 long   g_uartBaud = DEFAULT_UART_BAUD;
 String g_language = "ru"; // "ru" | "en"
@@ -578,7 +583,9 @@ void handleRoot() {
   html += "<form action='/restart' method='POST' style='display:inline'><button onclick='return confirm(\"" + T(T_CONFIRM_RESTART) + "\")'>" + T(T_BTN_RESTART) + "</button></form>";
   html += "<a class='btn' href='/settings'>" + T(T_BTN_SETTINGS) + "</a>";
   html += "<a class='btn' href='/wifi'>" + T(T_BTN_WIFI) + "</a>";
+#ifdef USE_WIREGUARD
   html += "<a class='btn' href='/vpn'>" + T(T_BTN_VPN) + "</a>";
+#endif
   html += "<form action='/wifi/reset' method='POST' style='display:inline'><button class='btn-danger' onclick='return confirm(\"" + T(T_CONFIRM_RESET_WIFI) + "\")'>" + T(T_BTN_RESET_WIFI) + "</button></form>";
   html += "</div></body></html>";
 
@@ -878,6 +885,7 @@ void checkBootButtonReset() {
   }
 }
 
+#ifdef USE_WIREGUARD
 // Запускает WireGuard-туннель, если он включён и настройки заполнены. Можно вызывать повторно —
 // используется и при старте (после успешного Wi-Fi), и сразу после сохранения настроек на портале.
 void startVpnConnect() {
@@ -951,6 +959,7 @@ void handleVpnPost() {
   webServer.sendHeader("Location", "/vpn?saved=1");
   webServer.send(303);
 }
+#endif
 
 void setupWebPortal() {
   webServer.on("/", HTTP_GET, handleRoot);
@@ -959,8 +968,10 @@ void setupWebPortal() {
   webServer.on("/wifi", HTTP_GET, handleWifiGet);
   webServer.on("/wifi", HTTP_POST, handleWifiPost);
   webServer.on("/wifi/reset", HTTP_POST, handleWifiReset);
+#ifdef USE_WIREGUARD
   webServer.on("/vpn", HTTP_GET, handleVpnGet);
   webServer.on("/vpn", HTTP_POST, handleVpnPost);
+#endif
   webServer.on("/lang", HTTP_GET, handleLang);
   webServer.on("/kick", HTTP_POST, handleKick);
   webServer.on("/restart", HTTP_POST, handleRestart);
@@ -1042,7 +1053,9 @@ void setup() {
     if (WiFi.status() == WL_CONNECTED) {
       apMode = false;
       Serial.println("\n[SYSTEM] Connected. Current ESP32-C3 IP: " + WiFi.localIP().toString());
+#ifdef USE_WIREGUARD
       startVpnConnect();
+#endif
     } else {
       apMode = true;
       WiFi.disconnect(true);
